@@ -8,6 +8,8 @@
 #include "cyw43.h"
 #include "lwip/init.h"
 #include "pico/multicore.h"
+#include <map>
+#include <string>
 
 // Command buffer
 #define MAX_CMD_LEN 128
@@ -83,6 +85,9 @@ void handle_status() {
     int wifi_status = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
     const char* status_str;
     switch (wifi_status) {
+        case CYW43_LINK_JOIN:
+            status_str = "Connected";
+            break;
         case CYW43_LINK_UP:
             status_str = "Connected";
             break;
@@ -104,7 +109,7 @@ void handle_status() {
     }
     printf("  WiFi Status: %s (code: %d)\n", status_str, wifi_status);
     
-    if (wifi_status == CYW43_LINK_UP) {
+    if (wifi_status == CYW43_LINK_UP || wifi_status == CYW43_LINK_JOIN) {
         // Get IP address
         struct netif *netif = netif_default;
         if (netif != NULL) {
@@ -139,8 +144,6 @@ void handle_exit() {
 }
 
 // WiFi configuration
-char wifi_ssid[32] = {0};
-char wifi_password[64] = {0};
 
 void handle_wifi(const char* ssid, const char* password) {
     if (strlen(ssid) == 0 || strlen(password) == 0) {
@@ -149,11 +152,11 @@ void handle_wifi(const char* ssid, const char* password) {
         return;
     }
     
-    printf("Connecting to WiFi network '%s'...\n", ssid);
+    printf("Connecting to WiFi network '%s' with password '%s'...\n", ssid, password);
     
     // Disable power management
-    cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);
-    printf("Power management disabled\n");
+    //cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);
+    //printf("Power management disabled\n");
     
     // Enable station mode
     cyw43_arch_enable_sta_mode();
@@ -168,7 +171,7 @@ void handle_wifi(const char* ssid, const char* password) {
         printf("Connection attempt %d of %d...\n", retry_count + 1, max_retries);
         
         // Try to connect
-        result = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 30000);
+        result = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA3_WPA2_AES_PSK, 30000);
         if (result == 0) {
             break;  // Connection successful
         }
@@ -206,6 +209,9 @@ void handle_wifi(const char* ssid, const char* password) {
     } else {
         const char* status_str;
         switch (wifi_status) {
+            case CYW43_LINK_JOIN:
+                status_str = "Joined";
+                break;
             case CYW43_LINK_DOWN:
                 status_str = "Link Down";
                 break;
@@ -229,31 +235,59 @@ void handle_wifi(const char* ssid, const char* password) {
 // WiFi scan callback for ssid command
 static int ssid_scan_callback(void *env, const cyw43_ev_scan_result_t *result) {
     if (result) {
-        char ssid[33] = {0};
-        memcpy(ssid, result->ssid, result->ssid_len);
-        ssid[result->ssid_len] = '\0';
-        const char* security;
-        switch (result->auth_mode) {
-            case CYW43_AUTH_OPEN: security = "Open"; break;
-            case CYW43_AUTH_WPA_TKIP_PSK: security = "WPA"; break;
-            case CYW43_AUTH_WPA2_AES_PSK: security = "WPA2"; break;
-            case CYW43_AUTH_WPA2_MIXED_PSK: security = "WPA2 Mixed"; break;
-            default: security = "Other"; break;
+        std::map<std::string, int> & ssid_map = *(std::map<std::string, int> *)env;   
+        std::string ssid((char *)result->ssid, (int)result->ssid_len);
+
+        if (ssid_map.find(ssid) == ssid_map.end()) {
+            ssid_map.insert(std::pair<std::string, int>(ssid, result->rssi));
+
+            const char *auth_mode_str;
+            switch (result->auth_mode) {
+                case CYW43_AUTH_OPEN: auth_mode_str = "Open"; break;
+                case CYW43_AUTH_WPA_TKIP_PSK: auth_mode_str = "WPA"; break;
+                case CYW43_AUTH_WPA2_AES_PSK: auth_mode_str = "WPA2"; break;
+                case CYW43_AUTH_WPA2_MIXED_PSK: auth_mode_str = "WPA2 Mixed"; break;
+                case CYW43_AUTH_WPA3_SAE_AES_PSK: auth_mode_str = "WPA3"; break;
+                case CYW43_AUTH_WPA3_WPA2_AES_PSK: auth_mode_str = "WPA2/WPA3"; break;
+                default: auth_mode_str = "Unknown"; break;
+            }
+
+            printf("ssid: %-32s rssi: %4d chan: %3d mac: %02x:%02x:%02x:%02x:%02x:%02x sec: %s (%u)\n",
+                ssid.c_str(), result->rssi, result->channel,
+                result->bssid[0], result->bssid[1], result->bssid[2], result->bssid[3], result->bssid[4], result->bssid[5],
+                auth_mode_str, result->auth_mode);
         }
-        printf("%-32s | RSSI: %3d dBm | Security: %s\n", ssid, result->rssi, security);
-    }
+    } 
     return 0;
 }
 
+
 void handle_ssid() {
     printf("Scanning for WiFi networks...\n");
-    if (cyw43_wifi_scan(&cyw43_state, NULL, NULL, ssid_scan_callback) != 0) {
-        printf("Failed to start scan\n");
-        return;
+
+    printf("scan started\n");
+
+    absolute_time_t scan_time = make_timeout_time_ms(10000);
+
+    bool scanning = false;
+
+    std::map<std::string, int> ssid_map;
+
+    // scan for 10 seconds
+    while (!time_reached(scan_time)) {
+        if (!scanning) {
+            cyw43_wifi_scan_options_t scan_options = {0};
+            int err = cyw43_wifi_scan(&cyw43_state, &scan_options, &ssid_map, ssid_scan_callback);
+            if (err != 0) {
+                printf("error: cyw43_wifi_scan failed with code %d\n", err);
+                return;
+            }
+        }
+        else if (!cyw43_wifi_scan_active(&cyw43_state)) {
+            scanning = false;
+        }
+        sleep_ms(100);
     }
-    // Wait for scan to complete (callback will print results)
-    sleep_ms(5000);
-    printf("Scan complete.\n");
 }
 
 // Process a complete command
@@ -304,7 +338,8 @@ int main() {
     
     
     // Initialize WiFi
-    if (cyw43_arch_init_with_country(CYW43_COUNTRY_AUSTRALIA)) {
+    //if (cyw43_arch_init_with_country(CYW43_COUNTRY_AUSTRALIA)) {
+    if (cyw43_arch_init()) {
         printf("Failed to initialize CYW43\n");
         return -1;
     }
