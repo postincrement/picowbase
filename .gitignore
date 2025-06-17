@@ -1,5 +1,5 @@
-build/pico_w_blink.bin
-build/pico_w_blink.elf
-build/pico_w_blink.hex
-build/pico_w_blink.uf2
+build/picowbase.bin
+build/picowbase.elf
+build/picowbase.hex
+build/picowbase.uf2
 build

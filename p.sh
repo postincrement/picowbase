@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+IMAGE_NAME="picowbase"
+
 # Get the absolute path of the project directory
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="pico-w-builder"
@@ -65,13 +67,13 @@ build() {
 
 # Program command
 program() {
-    if [ ! -f "build/pico_w_blink.elf" ]; then
+    if [ ! -f "build/${IMAGE_NAME}.elf" ]; then
         echo "ELF file not found. Please run 'build' first."
         exit 1
     fi
 
     echo "Programming Pico W..."
-    picotool load -v build/pico_w_blink.elf
+    picotool load -v build/${IMAGE_NAME}.elf
 
     echo "Rebooting Pico W into bootloader mode..."
     picotool reboot 

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+IMAGE_NAME="picowbase"
+
 # Print build environment info
 echo "Build environment:"
 echo "SDK Path: $PICO_SDK_PATH"
@@ -18,15 +20,15 @@ cmake -DPICO_SDK_PATH=/opt/pico-sdk ..
 make -j4
 
 # Generate additional output files
-arm-none-eabi-objcopy -Oihex pico_w_blink.elf pico_w_blink.hex
-arm-none-eabi-objcopy -Obinary pico_w_blink.elf pico_w_blink.bin
+arm-none-eabi-objcopy -Oihex ${IMAGE_NAME}.elf ${IMAGE_NAME}.hex
+arm-none-eabi-objcopy -Obinary ${IMAGE_NAME}.elf ${IMAGE_NAME}.bin
 
 echo "Build completed successfully!"
 echo "Output files are available in the build directory:"
-echo "  - pico_w_blink.elf"
-echo "  - pico_w_blink.hex"
-echo "  - pico_w_blink.bin"
-echo "  - pico_w_blink.uf2"
+echo "  - ${IMAGE_NAME}.elf"
+echo "  - ${IMAGE_NAME}.hex"
+echo "  - ${IMAGE_NAME}.bin"
+echo "  - ${IMAGE_NAME}.uf2"
 echo ""
 echo "To program the device, use picotool from your host system:"
-echo "  picotool load pico_w_blink.uf2" 
+echo "  picotool load ${IMAGE_NAME}.elf" 

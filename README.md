@@ -15,33 +15,23 @@ This is a simple example project for the Raspberry Pi Pico W that demonstrates:
 
 ## Building the Project
 
-1. Build the container (only needed first time):
+1. Build, create and start the container (only needed first time):
    ```bash
-   podman build -t pico-w-builder .
-   ```
-
-2. Create and start the container (only needed first time):
-   ```bash
-   podman create --name pico-w-builder -v /absolute/path/to/your/project:/build localhost/pico-w-builder
-   podman start pico-w-builder
+   ./p.sh bootstrap
    ```
    Replace `/absolute/path/to/your/project` with the full path to your project directory.
 
-3. To access the container's shell:
+2. To access the container's shell:
    ```bash
-   podman exec -it pico-w-builder /bin/bash
+   ./p.sh shell
    ```
 
-4. Inside the container, run the build script:
+3. To build the app inside the container
    ```bash
-   cd /build
+   ./p.sh build
    ./build.sh
    ```
 
-5. After the build completes, you can exit the shell:
-   ```bash
-   exit
-   ```
 
 ## Managing the Container
 
@@ -68,7 +58,7 @@ The build process creates a UF2 file in the `build` directory. To program your P
 2. Connect your Pico W to your computer via USB
 3. Run the following command from your project directory:
    ```bash
-   picotool load build/pico_w_blink.uf2
+   picotool load build/picowbase.elf
    ```
 
 If you need to reboot the Pico W into bootloader mode:
