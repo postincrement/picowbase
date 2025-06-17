@@ -48,6 +48,9 @@ target_compile_definitions(picowbase PRIVATE
     PICO_BOOTLOADER_DRIVER_QUICK_BOOT_VALIDATE_CRC_FAST=1
 )
 
+# Add memory usage to the build
+string(APPEND CMAKE_EXE_LINKER_FLAGS "-Wl,--print-memory-usage")
+
 # Generate UF2 file directly
 add_custom_command(TARGET picowbase POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
