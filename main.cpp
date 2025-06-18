@@ -10,6 +10,95 @@
 #include "pico/multicore.h"
 #include <map>
 #include <string>
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+
+// Flash storage configuration
+#define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define FLASH_CREDENTIALS_MAGIC 0x57494649  // "WIFI" in hex
+#define MAX_SSID_LEN 32
+#define MAX_PASSWORD_LEN 64
+
+// WiFi credentials structure
+typedef struct {
+    uint32_t magic;
+    char ssid[MAX_SSID_LEN];
+    char password[MAX_PASSWORD_LEN];
+    uint32_t checksum;
+} wifi_credentials_t;
+
+// Flash storage functions
+uint32_t calculate_checksum(const wifi_credentials_t* creds) {
+    uint32_t checksum = 0;
+    const uint8_t* data = (const uint8_t*)creds;
+    for (size_t i = 0; i < sizeof(wifi_credentials_t) - sizeof(uint32_t); i++) {
+        checksum += data[i];
+    }
+    return checksum;
+}
+
+bool save_wifi_credentials(const char* ssid, const char* password) {
+    wifi_credentials_t creds;
+    creds.magic = FLASH_CREDENTIALS_MAGIC;
+    strncpy(creds.ssid, ssid, MAX_SSID_LEN - 1);
+    creds.ssid[MAX_SSID_LEN - 1] = '\0';
+    strncpy(creds.password, password, MAX_PASSWORD_LEN - 1);
+    creds.password[MAX_PASSWORD_LEN - 1] = '\0';
+    creds.checksum = calculate_checksum(&creds);
+    
+    // Disable interrupts during flash write
+    uint32_t ints = save_and_disable_interrupts();
+    
+    // Erase the flash sector
+    flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
+    
+    // Write the credentials
+    flash_range_program(FLASH_TARGET_OFFSET, (const uint8_t*)&creds, sizeof(wifi_credentials_t));
+    
+    // Restore interrupts
+    restore_interrupts(ints);
+    
+    // Verify the write
+    const wifi_credentials_t* stored = (const wifi_credentials_t*)(XIP_BASE + FLASH_TARGET_OFFSET);
+    if (stored->magic == FLASH_CREDENTIALS_MAGIC && 
+        stored->checksum == calculate_checksum(stored)) {
+        return true;
+    }
+    
+    return false;
+}
+
+bool load_wifi_credentials(char* ssid, char* password) {
+    const wifi_credentials_t* stored = (const wifi_credentials_t*)(XIP_BASE + FLASH_TARGET_OFFSET);
+    
+    // Check magic number and checksum
+    if (stored->magic != FLASH_CREDENTIALS_MAGIC) {
+        return false;
+    }
+    
+    if (stored->checksum != calculate_checksum(stored)) {
+        return false;
+    }
+    
+    // Copy credentials
+    strncpy(ssid, stored->ssid, MAX_SSID_LEN);
+    strncpy(password, stored->password, MAX_PASSWORD_LEN);
+    
+    return true;
+}
+
+bool clear_wifi_credentials() {
+    // Disable interrupts during flash write
+    uint32_t ints = save_and_disable_interrupts();
+    
+    // Erase the flash sector
+    flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
+    
+    // Restore interrupts
+    restore_interrupts(ints);
+    
+    return true;
+}
 
 // Command buffer
 #define MAX_CMD_LEN 128
@@ -45,7 +134,11 @@ void handle_help() {
     printf("  clear   - Clear screen\n");
     printf("  exit    - Enter bootloader mode for programming\n");
     printf("  ssid    - Scan for WiFi networks\n");
-    printf("  wifi <ssid> <password> - Connect to WiFi network\n");
+    printf("  wifi    - Connect using saved WiFi credentials\n");
+    printf("  wifi <ssid> <password> - Connect with provided credentials\n");
+    printf("  save <ssid> <password> - Save WiFi credentials to flash\n");
+    printf("  load    - Load and connect using saved credentials\n");
+    printf("  clear_creds - Clear saved WiFi credentials\n");
 }
 
 void handle_led(const char* state) {
@@ -146,13 +239,31 @@ void handle_exit() {
 // WiFi configuration
 
 void handle_wifi(const char* ssid, const char* password) {
+    char actual_ssid[MAX_SSID_LEN];
+    char actual_password[MAX_PASSWORD_LEN];
+    bool using_saved_creds = false;
+    
+    // If no arguments provided, try to load saved credentials
     if (strlen(ssid) == 0 || strlen(password) == 0) {
-        printf("Error: Both SSID and password are required\n");
-        printf("Usage: wifi <ssid> <password>\n");
-        return;
+        if (load_wifi_credentials(actual_ssid, actual_password)) {
+            printf("Using saved WiFi credentials for network: %s\n", actual_ssid);
+            using_saved_creds = true;
+        } else {
+            printf("Error: No saved WiFi credentials found and no credentials provided\n");
+            printf("Usage: wifi <ssid> <password> - Connect with provided credentials\n");
+            printf("       wifi - Connect using saved credentials\n");
+            printf("Use 'save <ssid> <password>' to store credentials first.\n");
+            return;
+        }
+    } else {
+        // Use provided credentials
+        strncpy(actual_ssid, ssid, MAX_SSID_LEN - 1);
+        actual_ssid[MAX_SSID_LEN - 1] = '\0';
+        strncpy(actual_password, password, MAX_PASSWORD_LEN - 1);
+        actual_password[MAX_PASSWORD_LEN - 1] = '\0';
     }
     
-    printf("Connecting to WiFi network '%s' with password '%s'...\n", ssid, password);
+    printf("Connecting to WiFi network '%s'...\n", actual_ssid);
     
     // Disable power management
     //cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);
@@ -171,7 +282,7 @@ void handle_wifi(const char* ssid, const char* password) {
         printf("Connection attempt %d of %d...\n", retry_count + 1, max_retries);
         
         // Try to connect
-        result = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA3_WPA2_AES_PSK, 30000);
+        result = cyw43_arch_wifi_connect_timeout_ms(actual_ssid, actual_password, CYW43_AUTH_WPA3_WPA2_AES_PSK, 30000);
         if (result == 0) {
             break;  // Connection successful
         }
@@ -229,6 +340,46 @@ void handle_wifi(const char* ssid, const char* password) {
                 break;
         }
         printf("Connection failed - WiFi status: %s (%d)\n", status_str, wifi_status);
+    }
+}
+
+void handle_save(const char* ssid, const char* password) {
+    if (strlen(ssid) == 0 || strlen(password) == 0) {
+        printf("Error: Both SSID and password are required\n");
+        printf("Usage: save <ssid> <password>\n");
+        return;
+    }
+    
+    printf("Saving WiFi credentials to flash...\n");
+    if (save_wifi_credentials(ssid, password)) {
+        printf("WiFi credentials saved successfully!\n");
+        printf("Credentials will be used automatically on next boot.\n");
+    } else {
+        printf("Failed to save WiFi credentials to flash.\n");
+    }
+}
+
+void handle_load() {
+    char ssid[MAX_SSID_LEN];
+    char password[MAX_PASSWORD_LEN];
+    
+    printf("Loading saved WiFi credentials...\n");
+    if (load_wifi_credentials(ssid, password)) {
+        printf("Found saved credentials for network: %s\n", ssid);
+        printf("Attempting to connect...\n");
+        handle_wifi(ssid, password);
+    } else {
+        printf("No saved WiFi credentials found.\n");
+        printf("Use 'save <ssid> <password>' to store credentials.\n");
+    }
+}
+
+void handle_clear_creds() {
+    printf("Clearing saved WiFi credentials...\n");
+    if (clear_wifi_credentials()) {
+        printf("WiFi credentials cleared successfully.\n");
+    } else {
+        printf("Failed to clear WiFi credentials.\n");
     }
 }
 
@@ -302,7 +453,7 @@ void process_command() {
     char arg[32] = {0};
     char subarg[64] = {0};
     
-    if (strncmp(cmd_buffer, "wifi", 4) == 0) {
+    if (strncmp(cmd_buffer, "wifi", 4) == 0 || strncmp(cmd_buffer, "save", 4) == 0) {
         sscanf(cmd_buffer, "%31s %31s %63s", cmd, arg, subarg);
     } else {
         sscanf(cmd_buffer, "%31s %31s", cmd, arg);
@@ -323,6 +474,12 @@ void process_command() {
         handle_wifi(arg, subarg);
     } else if (strcmp(cmd, "ssid") == 0) {
         handle_ssid();
+    } else if (strcmp(cmd, "save") == 0) {
+        handle_save(arg, subarg);
+    } else if (strcmp(cmd, "load") == 0) {
+        handle_load();
+    } else if (strcmp(cmd, "clear_creds") == 0) {
+        handle_clear_creds();
     } else {
         printf("Unknown command. Type 'help' for available commands.\n");
     }
@@ -358,6 +515,46 @@ int main() {
     
     // Enable station mode
     cyw43_arch_enable_sta_mode();
+    
+    // Try to connect using saved credentials
+    char saved_ssid[MAX_SSID_LEN];
+    char saved_password[MAX_PASSWORD_LEN];
+    if (load_wifi_credentials(saved_ssid, saved_password)) {
+        printf("Found saved WiFi credentials. Attempting to connect...\n");
+        printf("Connecting to: %s\n", saved_ssid);
+        
+        // Try to connect with retries
+        const int max_retries = 3;
+        int retry_count = 0;
+        int result = 0;
+        
+        while (retry_count < max_retries) {
+            printf("Connection attempt %d of %d...\n", retry_count + 1, max_retries);
+            
+            result = cyw43_arch_wifi_connect_timeout_ms(saved_ssid, saved_password, CYW43_AUTH_WPA3_WPA2_AES_PSK, 30000);
+            if (result == 0) {
+                break;  // Connection successful
+            }
+            
+            printf("Connection attempt failed (error: %d), retrying...\n", result);
+            retry_count++;
+            if (retry_count < max_retries) {
+                sleep_ms(2000);  // Wait before retry
+            }
+        }
+        
+        if (result == 0) {
+            printf("Successfully connected to saved WiFi network!\n");
+            struct netif *netif = netif_default;
+            if (netif != NULL) {
+                printf("IP Address: %s\n", ip4addr_ntoa(&netif->ip_addr));
+            }
+        } else {
+            printf("Failed to connect to saved WiFi network after %d attempts\n", max_retries);
+        }
+    } else {
+        printf("No saved WiFi credentials found.\n");
+    }
     
     printf("\nPico W WiFi CLI\n");
     printf("Type 'help' for available commands\n\n");
