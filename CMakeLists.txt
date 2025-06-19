@@ -16,7 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 pico_sdk_init()
 
 # Add the executable
-add_executable(picowbase main.cpp)
+add_executable(picowbase main.cpp sd_card.cpp)
 
 # Add include directories
 target_include_directories(picowbase PRIVATE
@@ -38,6 +38,7 @@ target_link_libraries(picowbase
     pico_lwip_arch
     pico_lwip_nosys
     pico_multicore
+    hardware_spi
 )
 
 # Enable quick boot and validation for programming without disconnecting USB
