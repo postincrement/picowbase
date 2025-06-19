@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "hardware/spi.h"
 
 // SD Card types
 #define SD_TYPE_UNKNOWN 0
@@ -45,7 +46,7 @@ typedef struct {
 class SDCard {
 private:
     // SD Card configuration
-    static const int SD_SPI_PORT = 1;  // spi1
+    static spi_inst_t* SD_SPI_PORT;  // spi1
     static const int SD_MOSI_PIN = 11;
     static const int SD_MISO_PIN = 12;
     static const int SD_SCK_PIN = 13;

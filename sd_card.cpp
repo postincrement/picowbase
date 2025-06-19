@@ -6,6 +6,9 @@
 #include "hardware/dma.h"
 #include "sd_card.h"
 
+// Static member definition
+spi_inst_t* SDCard::SD_SPI_PORT = spi1;
+
 // Global instance
 SDCard sd_card;
 
